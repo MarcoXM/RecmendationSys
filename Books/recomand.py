@@ -14,7 +14,9 @@ class Recommender:
         self.username2id = {}
         self.userid2name = {}
         self.productid2name = {}
-        # 将距离计算方式保存下来
+        # 
+        self.frequencies = {}
+        self.deviations = {}
         self.metric = metric
         if self.metric == 'pearson':
             self.fn = self.pearson
@@ -50,6 +52,73 @@ class Recommender:
         ratings = ratings[:n]
         for rating in ratings:
             print("%s\t%i" % (rating[0], rating[1]))
+
+
+    def showUserTopItems(self, user, n):
+      """ show top n items for user"""
+      items = list(self.data[user].items())
+      items.sort(key=lambda itemTuple: itemTuple[1], reverse=True)
+      for i in range(n):
+         print("%s\t%i" % (self.convertProductID2name(items[i][0]),
+                           items[i][1]))
+
+
+    def loadMovieLens(self, path=''):
+        self.data = {}
+        #
+        # first load movie ratings
+        #
+        i = 0
+        #
+        # First load book ratings into self.data
+        #
+        #f = codecs.open(path + "u.data", 'r', 'utf8')
+        f = codecs.open(path + "u.data", 'r', 'ascii')
+        #  f = open(path + "u.data")
+        for line in f:
+            i += 1
+            #separate line into fields
+            fields = line.split('\t')
+            user = fields[0]
+            movie = fields[1]
+            rating = int(fields[2].strip().strip('"'))
+            if user in self.data:
+                currentRatings = self.data[user]
+            else:
+                currentRatings = {}
+                currentRatings[movie] = rating
+                self.data[user] = currentRatings
+        f.close()
+        #
+        # Now load movie into self.productid2name
+        # the file u.item contains movie id, title, release date among
+        # other fields
+        #
+        #f = codecs.open(path + "u.item", 'r', 'utf8')
+        f = codecs.open(path + "u.item", 'r', 'iso8859-1', 'ignore')
+        #f = open(path + "u.item")
+        for line in f:
+            i += 1
+            #separate line into fields
+            fields = line.split('|')
+            mid = fields[0].strip()
+            title = fields[1].strip()
+            self.productid2name[mid] = title
+        f.close()
+        #
+        #  Now load user info into both self.userid2name
+        #  and self.username2id
+        #
+        #f = codecs.open(path + "u.user", 'r', 'utf8')
+        f = open(path + "u.user")
+        for line in f:
+            i += 1
+            fields = line.split('|')
+            userid = fields[0].strip('"')
+            self.userid2name[userid] = line
+            self.username2id[line] = userid
+        f.close()
+        print("we have {} records".format(i))
         
 
     def loadBookDB(self, path=''):
@@ -114,6 +183,56 @@ class Recommender:
             self.username2id[location] = userid
         f.close()
         print("we have {} records".format(i))
+
+
+    def computeDeviations(self):
+        # for each person in the data:
+        #    get their ratings
+        for ratings in self.data.values():
+            # for each item & rating in that set of ratings:
+            for (item, rating) in ratings.items():
+                self.frequencies.setdefault(item, {})
+                self.deviations.setdefault(item, {})                    
+                # for each item2 & rating2 in that set of ratings:
+                for (item2, rating2) in ratings.items():
+                    if item != item2:
+                        # add the difference between the ratings to our
+                        # computation
+                        self.frequencies[item].setdefault(item2, 0)
+                        self.deviations[item].setdefault(item2, 0.0)
+                        self.frequencies[item][item2] += 1
+                        self.deviations[item][item2] += rating - rating2
+                
+        for (item, ratings) in self.deviations.items():
+            for item2 in ratings:
+                ratings[item2] /= self.frequencies[item][item2]
+
+
+    def slopeOneRecommendations(self, userRatings):
+        recommendations = {}
+        frequencies = {}
+        # for every item and rating in the user's recommendations
+        for (userItem, userRating) in userRatings.items():
+            # for every item in our dataset that the user didn't rate
+            for (diffItem, diffRatings) in self.deviations.items():
+                if diffItem not in userRatings and userItem in self.deviations[diffItem]:
+                    freq = self.frequencies[diffItem][userItem]
+                    recommendations.setdefault(diffItem, 0.0)
+                    frequencies.setdefault(diffItem, 0)
+                    # add to the running sum representing the numerator
+                    # of the formula
+                    recommendations[diffItem] += (diffRatings[userItem] +
+                                                    userRating) * freq
+                    # keep a running sum of the frequency of diffitem
+                    frequencies[diffItem] += freq
+        recommendations =  [(self.convertProductID2name(k),
+                            v / frequencies[k])
+                            for (k, v) in recommendations.items()]
+        # finally sort and return
+        recommendations.sort(key=lambda artistTuple: artistTuple[1],
+                            reverse = True)
+        # I am only going to return the first 50 recommendations
+        return recommendations[:50]
                 
         
     def pearson(self, rating1, rating2):
@@ -239,9 +358,23 @@ new_users = {"Angelica": {"Blues Traveler": 3.5, "Broken Bells": 2.0,
                       "The Strokes": 3.0}
         }
 
+users2 = {"Amy": {"Taylor Swift": 4, "PSY": 3, "Whitney Houston": 4},
+          "Ben": {"Taylor Swift": 5, "PSY": 2},
+          "Clara": {"PSY": 3.5, "Whitney Houston": 4},
+          "Daisy": {"Taylor Swift": 5, "Whitney Houston": 3}}
 
 if __name__ =="__main__":
+    ###
+    print("Start test One !!!!")
     r = Recommender()
     r.loadBookDB('input/')
     print(r.recommend('171118'))
+
+    ##
+    print("Start Test Two !!!")
+    r = Recommender(0)
+    r.loadMovieLens('../MovieLens/data/ml-100k/')
+    r.computeDeviations()
+    r.slopeOneRecommendations(r.data['25'])
+
 
